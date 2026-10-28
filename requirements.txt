@@ -1,2 +1,1 @@
-# No additional Python packages required.
-# Runtime audio playback requires the Debian package: mpv
+miniaudio>=1.61
