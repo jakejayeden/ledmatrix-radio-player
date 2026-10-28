@@ -1,6 +1,7 @@
 """Internet radio player plugin for LEDMatrix."""
 
 import threading
+import time
 
 import miniaudio
 
@@ -26,6 +27,8 @@ class RadioPlayerPlugin(BasePlugin):
         self.now_playing = ""
         self.status = "Stopped"
         self.last_error = ""
+        self._scroll_started = time.monotonic()
+        self.enable_scrolling = True
         self._load_config(config)
         self._register_fonts()
 
@@ -36,6 +39,7 @@ class RadioPlayerPlugin(BasePlugin):
         self.autoplay = bool(config.get("autoplay", True))
         self.volume = max(0, min(100, int(config.get("volume", 70))))
         self.metadata_enabled = bool(config.get("metadata_enabled", True))
+        self.scroll_speed = max(5.0, min(100.0, float(config.get("scroll_speed", 30))))
         self.station_color = tuple(config.get("station_color", [255, 80, 80]))
         self.metadata_color = tuple(config.get("metadata_color", [255, 255, 255]))
 
@@ -64,6 +68,7 @@ class RadioPlayerPlugin(BasePlugin):
         title = (title or "").strip()
         if title and title != self.now_playing:
             self.now_playing = title
+            self._scroll_started = time.monotonic()
             self.logger.info("Now playing: %s", title)
 
     def _audio_worker(self):
@@ -84,8 +89,6 @@ class RadioPlayerPlugin(BasePlugin):
                     nchannels=2,
                     sample_rate=44100,
                 )
-                # PlaybackDevice.start() expects an already-primed generator.
-                # This is required by both older and current pyminiaudio releases.
                 next(stream)
                 device = miniaudio.PlaybackDevice(
                     output_format=miniaudio.SampleFormat.SIGNED16,
@@ -93,9 +96,6 @@ class RadioPlayerPlugin(BasePlugin):
                     sample_rate=44100,
                     app_name="LEDMatrix Radio",
                 )
-                # set_master_volume() was added to newer pyminiaudio versions.
-                # Do not make playback depend on it: older installations should
-                # still play at the system/device volume rather than fail.
                 set_volume = getattr(device, "set_master_volume", None)
                 if callable(set_volume):
                     set_volume(self.volume / 100.0)
@@ -178,17 +178,51 @@ class RadioPlayerPlugin(BasePlugin):
             return text
         return text[:max(1, limit - 3)] + "..."
 
+    def _draw_metadata(self, text, font, width, y):
+        """Draw short metadata centered; smoothly marquee long metadata."""
+        try:
+            text_width = self.display_manager.get_text_width(text, font)
+        except Exception:
+            text_width = len(text) * self.META_FONT[1]
+
+        if text_width <= width - 4:
+            self.display_manager.draw_text(
+                text, x=width // 2, y=y, color=self.metadata_color,
+                font=font, centered=True,
+            )
+            return
+
+        # Conventional marquee: enter at the right edge, travel smoothly to
+        # the left, then leave a readable gap before repeating.
+        gap = 24
+        travel = width + text_width + gap
+        elapsed = max(0.0, time.monotonic() - self._scroll_started)
+        x = width - int((elapsed * self.scroll_speed) % travel)
+        self.display_manager.draw_text(
+            text, x=x, y=y, color=self.metadata_color,
+            font=font, centered=False,
+        )
+
     def display(self, force_clear=False):
-        if force_clear:
-            self.display_manager.clear()
+        # Clear every animation frame. Without this, moving glyphs are painted
+        # over old glyphs and the bottom line turns into a mashed white band.
+        self.display_manager.clear()
         width, height = self.display_manager.width, self.display_manager.height
         station_font = self._font("station", self.STATION_FONT)
         meta_font = self._font("meta", self.META_FONT)
         chars = max(8, width // 5)
         station = self._ellipsize(self.station_name, chars)
-        detail = self._ellipsize(self.now_playing or self.status, chars + 4)
-        self.display_manager.draw_text(station, x=width // 2, y=max(1, height // 4), color=self.station_color, font=station_font, centered=True)
-        self.display_manager.draw_text(detail, x=width // 2, y=max(12, (height * 2) // 3), color=self.metadata_color, font=meta_font, centered=True)
+        detail = self.now_playing or self.status
+
+        set_scrolling = getattr(self.display_manager, "set_scrolling_state", None)
+        if callable(set_scrolling):
+            set_scrolling(True)
+
+        self.display_manager.draw_text(
+            station, x=width // 2, y=max(1, height // 4),
+            color=self.station_color, font=station_font, centered=True,
+        )
+        self._draw_metadata(detail, meta_font, width, max(12, (height * 2) // 3))
         self.display_manager.update_display()
 
     def on_config_change(self, new_config):
@@ -197,6 +231,7 @@ class RadioPlayerPlugin(BasePlugin):
         super().on_config_change(new_config)
         self._load_config(self.config)
         self._register_fonts()
+        self._scroll_started = time.monotonic()
         if (old_stream, old_volume) != (self.stream_url, self.volume):
             self._stop_player()
             self.now_playing = ""
@@ -220,5 +255,8 @@ class RadioPlayerPlugin(BasePlugin):
         return info
 
     def cleanup(self):
+        set_scrolling = getattr(self.display_manager, "set_scrolling_state", None)
+        if callable(set_scrolling):
+            set_scrolling(False)
         self._stop_player()
         super().cleanup()
