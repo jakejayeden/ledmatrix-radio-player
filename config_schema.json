@@ -4,12 +4,12 @@
   "properties": {
     "enabled": {"type": "boolean", "default": false, "description": "Enable the radio player."},
     "station_name": {"type": "string", "default": "Heart 80s", "description": "Name shown on the matrix."},
-    "stream_url": {"type": "string", "default": "", "description": "Direct MP3/AAC/HLS radio stream URL. A station web page is not normally a direct stream."},
+    "stream_url": {"type": "string", "default": "", "description": "Direct internet-radio stream URL."},
     "autoplay": {"type": "boolean", "default": true, "description": "Start audio when the plugin is enabled."},
-    "volume": {"type": "integer", "minimum": 0, "maximum": 100, "default": 70, "description": "Playback volume percentage."},
-    "audio_device": {"type": "string", "default": "alsa/plughw:CARD=Device,DEV=0", "description": "mpv audio device. Default targets the C-Media USB sound card used on the test Pi."},
-    "metadata_enabled": {"type": "boolean", "default": true, "description": "Read ICY stream metadata when supplied by the station."},
-    "update_interval": {"type": "integer", "minimum": 2, "maximum": 300, "default": 5, "description": "Seconds between status/metadata refreshes.", "x-advanced": true},
+    "volume": {"type": "integer", "minimum": 0, "maximum": 100, "default": 70, "description": "Playback volume percentage. Initial miniaudio backend currently uses the system output level."},
+    "audio_device": {"type": "string", "default": "", "description": "Reserved audio-output selector. Leave blank to use the system/default output (your C-Media USB card is currently ALSA card 0).", "x-advanced": true},
+    "metadata_enabled": {"type": "boolean", "default": true, "description": "Read ICY StreamTitle metadata when supplied by the station."},
+    "update_interval": {"type": "integer", "minimum": 2, "maximum": 300, "default": 5, "description": "Seconds between plugin updates.", "x-advanced": true},
     "display_duration": {"type": "number", "minimum": 5, "maximum": 300, "default": 30, "description": "Seconds this screen remains in the LEDMatrix rotation."},
     "station_color": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 255}, "minItems": 3, "maxItems": 3, "default": [255, 80, 80], "description": "Station-name RGB colour."},
     "metadata_color": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 255}, "minItems": 3, "maxItems": 3, "default": [255, 255, 255], "description": "Now-playing RGB colour."}
