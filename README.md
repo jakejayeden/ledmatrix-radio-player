@@ -1,64 +1,35 @@
 # LEDMatrix Radio Player
 
-Third-party internet-radio plugin for [ChuckBuilds/LEDMatrix](https://github.com/ChuckBuilds/LEDMatrix), initially developed for LEDMatrix 3.8.x and a 128x32 RGB matrix.
+Third-party internet-radio plugin for ChuckBuilds/LEDMatrix, initially developed for LEDMatrix 3.8.x and a 128x32 RGB matrix.
 
 ## Features
 
-- Plays direct HTTP/HTTPS MP3, AAC and HLS radio streams through `mpv`.
-- Configurable ALSA output device and volume.
-- Defaults to the test Pi's C-Media USB adapter: `alsa/plughw:CARD=Device,DEV=0`.
-- Displays station name plus ICY `StreamTitle` metadata when the stream supplies it.
-- Compact layout intended for 128x32, while using the live display dimensions.
-- Restarts playback if `mpv` exits.
-- Stops the player when the plugin unloads.
+- Self-contained Python audio backend using `miniaudio`; no separate `mpv`, VLC or mpg123 installation.
+- `miniaudio` is declared in `requirements.txt`, so LEDMatrix installs it with the plugin's Python dependencies.
+- Plays direct internet-radio streams and reconnects after playback errors.
+- Displays station name plus ICY `StreamTitle` metadata when supplied by the station.
+- Compact layout for 128x32 while using the actual display dimensions.
+- Stops audio cleanly when the plugin unloads or configuration changes.
 
-## Important: station page vs stream URL
+## Installation
 
-A web-player page such as `https://www.radio-uk.co.uk/heart-80s` is not necessarily the audio stream. Version 0.1.0 expects a **direct stream URL** in `stream_url`. Resolving station web pages is planned separately so that fragile/private player URLs are not hard-coded into the plugin.
-
-## Pi prerequisite
-
-`mpv` is not installed on the initial test Pi. Install it with:
-
-```bash
-sudo apt update
-sudo apt install -y mpv
-```
-
-Confirm the USB device is visible:
-
-```bash
-aplay -l
-aplay -L
-```
-
-For the test hardware, ALSA reports the playback adapter as `Device`, therefore the plugin default is:
-
-```text
-alsa/plughw:CARD=Device,DEV=0
-```
-
-Using the ALSA card name is more robust than relying on it always being numeric card 0.
-
-## Install into LEDMatrix
-
-The LEDMatrix third-party plugin API accepts a GitHub repository URL. From the Pi, with LEDMatrix's web service running, it can be installed through the Plugin Store's install-from-URL feature using:
+Install this repository through LEDMatrix's third-party **install from URL** feature:
 
 ```text
 https://github.com/jakejayeden/ledmatrix-radio-player
 ```
 
-Then open the plugin settings, enable it, enter a direct radio `stream_url`, select volume/audio device, and save.
+There is no separate audio-player package to install. The plugin dependency is:
 
-## First audio test
-
-Before blaming the plugin for an audio problem, test a known direct stream with mpv itself:
-
-```bash
-mpv --no-video --audio-device='alsa/plughw:CARD=Device,DEV=0' 'DIRECT_STREAM_URL'
+```text
+miniaudio>=1.61
 ```
 
-If that plays through the speakers, the plugin uses the same playback path.
+The test Pi is Debian 13 / LEDMatrix 3.8.7. Its C-Media USB Audio Device is currently ALSA card 0 and the system default output, so the first build lets miniaudio use the default output rather than relying on a numeric card index.
+
+## Station page vs stream URL
+
+A web-player page such as the Radio UK Heart 80s page is not necessarily the audio stream. The current build expects a direct internet-radio stream in `stream_url`. Heart 80s stream resolution and programme/show metadata are the next station-specific pieces to add.
 
 ## Display
 
@@ -69,23 +40,31 @@ On a 128x32 matrix the intended layout is approximately:
      A-ha - Take On Me
 ```
 
-0.1.0 truncates unusually long metadata to keep it inside the panel. Smooth scrolling and programme/show metadata are planned follow-ups.
+Long metadata is currently shortened to fit. Smooth scrolling is planned.
 
 ## Metadata
 
-The plugin requests standard ICY metadata (`Icy-MetaData: 1`) independently from mpv. If the station sends an `icy-metaint` header and `StreamTitle`, the title appears on the second line. Stations that do not expose ICY metadata simply show playback status until another metadata provider is added.
+The plugin requests standard ICY metadata (`Icy-MetaData: 1`) in a background thread. If the station supplies `icy-metaint` and `StreamTitle`, the title is displayed. If it does not, playback status is shown until a station-specific metadata provider is available.
 
 ## Troubleshooting
 
-If the display says **mpv missing**, install the Debian `mpv` package. If it says **Set stream URL**, configure a direct stream URL rather than a station webpage. If mpv runs but no sound is heard, verify the configured `audio_device` against `aplay -L` and test that exact device with mpv from the shell.
+If the display says **Set stream URL**, configure a direct stream rather than the station's web page. Playback errors are exposed through the plugin's `get_info()` data and LEDMatrix logs.
+
+For audio debugging on the test Pi, the useful ALSA commands remain:
+
+```bash
+aplay -l
+aplay -L
+```
 
 ## Roadmap
 
-- Heart 80s / Global Player stream discovery or documented direct-stream configuration.
+- Heart 80s / Global Player stream discovery.
 - Programme/show metadata provider.
+- Explicit miniaudio output-device selection when required.
+- Software volume control.
 - Smooth horizontal scrolling for long show/track names.
-- Play/stop controls exposed through the LEDMatrix web UI where supported.
-- Optional station presets and fallback streams.
+- Station presets and fallback streams.
 - Tests against the LEDMatrix plugin safety harness.
 
 ## License
