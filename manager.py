@@ -4,6 +4,7 @@ import threading
 import time
 
 import miniaudio
+from PIL import Image, ImageDraw, ImageFont
 
 from src.plugin_system.base_plugin import BasePlugin
 
@@ -13,9 +14,6 @@ HEART_80S_STREAM = "https://media-ssl.musicradio.com/Heart80sMP3"
 
 class RadioPlayerPlugin(BasePlugin):
     """Play an internet-radio stream and display ICY metadata."""
-
-    STATION_FONT = ("press_start", 8)
-    META_FONT = ("press_start", 6)
 
     def __init__(self, plugin_id, config, display_manager, cache_manager, plugin_manager):
         super().__init__(plugin_id, config, display_manager, cache_manager, plugin_manager)
@@ -29,8 +27,10 @@ class RadioPlayerPlugin(BasePlugin):
         self.last_error = ""
         self._scroll_started = time.monotonic()
         self.enable_scrolling = True
+        # Match the Apple Calendar plugin: Pillow's built-in default font,
+        # rendered directly onto an RGB image rather than LEDMatrix TTF/BDF fonts.
+        self.font = ImageFont.load_default()
         self._load_config(config)
-        self._register_fonts()
 
     def _load_config(self, config):
         self.station_name = str(config.get("station_name", "Heart 80s"))
@@ -42,25 +42,6 @@ class RadioPlayerPlugin(BasePlugin):
         self.scroll_speed = max(5.0, min(100.0, float(config.get("scroll_speed", 30))))
         self.station_color = tuple(config.get("station_color", [255, 80, 80]))
         self.metadata_color = tuple(config.get("metadata_color", [255, 255, 255]))
-
-    def _register_fonts(self):
-        fm = getattr(self.plugin_manager, "font_manager", None)
-        if fm is None:
-            return
-        try:
-            fm.register_manager_font(self.plugin_id, f"{self.plugin_id}.station", self.STATION_FONT[0], self.STATION_FONT[1], self.station_color)
-            fm.register_manager_font(self.plugin_id, f"{self.plugin_id}.meta", self.META_FONT[0], self.META_FONT[1], self.metadata_color)
-        except Exception as exc:
-            self.logger.warning("Could not register radio fonts: %s", exc)
-
-    def _font(self, key, spec):
-        fm = getattr(self.plugin_manager, "font_manager", None)
-        if fm is None:
-            return None
-        try:
-            return fm.resolve_font(f"{self.plugin_id}.{key}", spec[0], spec[1], plugin_id=self.plugin_id)
-        except Exception:
-            return None
 
     def _title_changed(self, _client, title):
         if not self.metadata_enabled:
@@ -172,57 +153,44 @@ class RadioPlayerPlugin(BasePlugin):
         elif self._audio_thread and self._audio_thread.is_alive():
             self._stop_player()
 
-    @staticmethod
-    def _ellipsize(text, limit):
-        if len(text) <= limit:
-            return text
-        return text[:max(1, limit - 3)] + "..."
+    def _text_width(self, draw, text):
+        bbox = draw.textbbox((0, 0), text, font=self.font)
+        return bbox[2] - bbox[0]
 
-    def _draw_metadata(self, text, font, width, y):
+    def _draw_centered(self, draw, text, y, width, fill):
+        text_width = self._text_width(draw, text)
+        draw.text(((width - text_width) // 2, y), text, font=self.font, fill=fill)
+
+    def _draw_metadata(self, draw, text, width, y):
         """Draw short metadata centered; smoothly marquee long metadata."""
-        try:
-            text_width = self.display_manager.get_text_width(text, font)
-        except Exception:
-            text_width = len(text) * self.META_FONT[1]
-
+        text_width = self._text_width(draw, text)
         if text_width <= width - 4:
-            self.display_manager.draw_text(
-                text, x=width // 2, y=y, color=self.metadata_color,
-                font=font, centered=True,
-            )
+            self._draw_centered(draw, text, y, width, self.metadata_color)
             return
 
-        # Conventional marquee: enter at the right edge, travel smoothly to
-        # the left, then leave a readable gap before repeating.
         gap = 24
         travel = width + text_width + gap
         elapsed = max(0.0, time.monotonic() - self._scroll_started)
         x = width - int((elapsed * self.scroll_speed) % travel)
-        self.display_manager.draw_text(
-            text, x=x, y=y, color=self.metadata_color,
-            font=font, centered=False,
-        )
+        draw.text((x, y), text, font=self.font, fill=self.metadata_color)
 
     def display(self, force_clear=False):
-        # Clear every animation frame. Without this, moving glyphs are painted
-        # over old glyphs and the bottom line turns into a mashed white band.
-        self.display_manager.clear()
+        # Render the complete 128x32-style frame in Pillow, matching Apple Calendar.
         width, height = self.display_manager.width, self.display_manager.height
-        station_font = self._font("station", self.STATION_FONT)
-        meta_font = self._font("meta", self.META_FONT)
-        chars = max(8, width // 5)
-        station = self._ellipsize(self.station_name, chars)
+        image = Image.new("RGB", (width, height), (0, 0, 0))
+        draw = ImageDraw.Draw(image)
         detail = self.now_playing or self.status
 
         set_scrolling = getattr(self.display_manager, "set_scrolling_state", None)
         if callable(set_scrolling):
             set_scrolling(True)
 
-        self.display_manager.draw_text(
-            station, x=width // 2, y=max(1, height // 4),
-            color=self.station_color, font=station_font, centered=True,
-        )
-        self._draw_metadata(detail, meta_font, width, max(12, (height * 2) // 3))
+        # Two compact rows for a 32px-high panel. Pillow's default font keeps
+        # the typography identical to the Apple Calendar rendering path.
+        self._draw_centered(draw, self.station_name, 5, width, self.station_color)
+        self._draw_metadata(draw, detail, width, 18)
+
+        self.display_manager.image = image
         self.display_manager.update_display()
 
     def on_config_change(self, new_config):
@@ -230,7 +198,6 @@ class RadioPlayerPlugin(BasePlugin):
         old_volume = self.volume
         super().on_config_change(new_config)
         self._load_config(self.config)
-        self._register_fonts()
         self._scroll_started = time.monotonic()
         if (old_stream, old_volume) != (self.stream_url, self.volume):
             self._stop_player()
