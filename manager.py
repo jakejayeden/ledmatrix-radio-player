@@ -78,27 +78,37 @@ class RadioPlayerPlugin(BasePlugin):
                     self.stream_url,
                     update_stream_title=self._title_changed if self.metadata_enabled else None,
                 )
-                # Decode the encoded radio source to a fixed PCM format that
-                # exactly matches the playback device. stream_any's current API
-                # calls this output_format (sample_format was never valid here).
                 stream = miniaudio.stream_any(
                     radio,
                     output_format=miniaudio.SampleFormat.SIGNED16,
                     nchannels=2,
                     sample_rate=44100,
                 )
+                # PlaybackDevice.start() expects an already-primed generator.
+                # This is required by both older and current pyminiaudio releases.
+                next(stream)
                 device = miniaudio.PlaybackDevice(
                     output_format=miniaudio.SampleFormat.SIGNED16,
                     nchannels=2,
                     sample_rate=44100,
                     app_name="LEDMatrix Radio",
                 )
-                device.set_master_volume(self.volume / 100.0)
+                # set_master_volume() was added to newer pyminiaudio versions.
+                # Do not make playback depend on it: older installations should
+                # still play at the system/device volume rather than fail.
+                set_volume = getattr(device, "set_master_volume", None)
+                if callable(set_volume):
+                    set_volume(self.volume / 100.0)
                 device.start(stream)
                 with self._lock:
                     self._radio = radio
                     self._device = device
                 self.status = "Playing"
+                self.logger.info(
+                    "Radio playback started (miniaudio %s, backend=%s)",
+                    getattr(miniaudio, "__version__", "unknown"),
+                    getattr(device, "backend", "unknown"),
+                )
                 while not self._audio_stop.wait(0.5):
                     pass
                 break
