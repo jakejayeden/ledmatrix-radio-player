@@ -3,8 +3,7 @@
   "type": "object",
   "properties": {
     "enabled": {"type": "boolean", "default": false, "description": "Enable the radio player."},
-    "station_name": {"type": "string", "default": "Heart 80s", "description": "Name shown on the matrix."},
-    "stream_url": {"type": "string", "default": "https://media-ssl.musicradio.com/Heart80sMP3", "description": "Direct internet-radio stream URL. Defaults to Heart 80s 128 kbps MP3."},
+    "station": {"type": "string", "title": "Station", "enum": ["heart_80s"], "enumNames": ["Heart 80s"], "default": "heart_80s", "description": "Choose the radio station. The plugin automatically selects the matching station name and stream URL."},
     "autoplay": {"type": "boolean", "default": true, "description": "Start audio when the plugin is enabled."},
     "volume": {"type": "integer", "minimum": 0, "maximum": 100, "default": 70, "description": "Playback volume percentage. Older miniaudio builds use the system output level."},
     "audio_device": {"type": "string", "default": "", "description": "Reserved audio-output selector. Leave blank to use the system/default output.", "x-advanced": true},
@@ -15,5 +14,5 @@
     "station_color": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 255}, "minItems": 3, "maxItems": 3, "default": [255, 80, 80], "description": "Station-name RGB colour."},
     "metadata_color": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 255}, "minItems": 3, "maxItems": 3, "default": [255, 255, 255], "description": "Now-playing RGB colour."}
   },
-  "required": ["enabled"]
+  "required": ["enabled", "station"]
 }
