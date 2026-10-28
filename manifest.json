@@ -1,7 +1,7 @@
 {
   "id": "ledmatrix-radio-player",
   "name": "Radio Player",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "author": "jakejayeden",
   "description": "Internet radio playback with station and ICY now-playing metadata for LEDMatrix.",
   "entry_point": "manager.py",
@@ -15,10 +15,22 @@
   "license": "GPL-3.0",
   "versions": [
     {
+      "version": "0.3.0",
+      "released": "2026-10-28",
+      "ledmatrix_min_version": "3.8.0",
+      "notes": "Adds Heart 80s as the built-in default using its public 128 kbps MP3 stream, including fallback for existing installs with an empty stream URL."
+    },
+    {
+      "version": "0.2.0",
+      "released": "2026-10-28",
+      "ledmatrix_min_version": "3.8.0",
+      "notes": "Moves playback to the pip-installable miniaudio backend so no separate mpv system package is required."
+    },
+    {
       "version": "0.1.0",
       "released": "2026-10-28",
       "ledmatrix_min_version": "3.8.0",
-      "notes": "Initial release: mpv audio playback, ALSA device selection, ICY metadata, reconnect handling, and compact 128x32 display."
+      "notes": "Initial plugin structure and compact 128x32 display."
     }
   ],
   "last_updated": "2026-10-28"
