@@ -1,7 +1,6 @@
 """Internet radio player plugin for LEDMatrix."""
 
 import threading
-import urllib.request
 
 import miniaudio
 
@@ -23,9 +22,7 @@ class RadioPlayerPlugin(BasePlugin):
         self._audio_thread = None
         self._audio_stop = threading.Event()
         self._device = None
-        self._stream = None
-        self._metadata_thread = None
-        self._metadata_stop = threading.Event()
+        self._radio = None
         self.now_playing = ""
         self.status = "Stopped"
         self.last_error = ""
@@ -35,13 +32,9 @@ class RadioPlayerPlugin(BasePlugin):
     def _load_config(self, config):
         self.station_name = str(config.get("station_name", "Heart 80s"))
         configured_url = str(config.get("stream_url", "")).strip()
-        # Existing installs created before the Heart preset stored an empty
-        # stream_url. Treat that as the Heart 80s preset rather than forcing
-        # users to delete/reinstall the plugin just to receive the new default.
         self.stream_url = configured_url or HEART_80S_STREAM
         self.autoplay = bool(config.get("autoplay", True))
         self.volume = max(0, min(100, int(config.get("volume", 70))))
-        self.audio_device = str(config.get("audio_device", "")).strip()
         self.metadata_enabled = bool(config.get("metadata_enabled", True))
         self.station_color = tuple(config.get("station_color", [255, 80, 80]))
         self.metadata_color = tuple(config.get("metadata_color", [255, 255, 255]))
@@ -65,23 +58,45 @@ class RadioPlayerPlugin(BasePlugin):
         except Exception:
             return None
 
+    def _title_changed(self, _client, title):
+        if not self.metadata_enabled:
+            return
+        title = (title or "").strip()
+        if title and title != self.now_playing:
+            self.now_playing = title
+            self.logger.info("Now playing: %s", title)
+
     def _audio_worker(self):
         """Decode and play the station using the pip-installed miniaudio library."""
         while not self._audio_stop.is_set():
+            radio = None
             device = None
             try:
                 self.status = "Connecting"
                 self.last_error = ""
-                radio = miniaudio.IceCastClient(self.stream_url)
-                stream = miniaudio.stream_any(radio, sample_format=miniaudio.SampleFormat.SIGNED16)
+                radio = miniaudio.IceCastClient(
+                    self.stream_url,
+                    update_stream_title=self._title_changed if self.metadata_enabled else None,
+                )
+                # Decode the encoded radio source to a fixed PCM format that
+                # exactly matches the playback device. stream_any's current API
+                # calls this output_format (sample_format was never valid here).
+                stream = miniaudio.stream_any(
+                    radio,
+                    output_format=miniaudio.SampleFormat.SIGNED16,
+                    nchannels=2,
+                    sample_rate=44100,
+                )
                 device = miniaudio.PlaybackDevice(
                     output_format=miniaudio.SampleFormat.SIGNED16,
-                    nchannels=radio.nchannels,
-                    sample_rate=radio.sample_rate,
+                    nchannels=2,
+                    sample_rate=44100,
+                    app_name="LEDMatrix Radio",
                 )
+                device.set_master_volume(self.volume / 100.0)
                 device.start(stream)
                 with self._lock:
-                    self._stream = stream
+                    self._radio = radio
                     self._device = device
                 self.status = "Playing"
                 while not self._audio_stop.wait(0.5):
@@ -97,10 +112,16 @@ class RadioPlayerPlugin(BasePlugin):
                 with self._lock:
                     if self._device is device:
                         self._device = None
-                    self._stream = None
+                    if self._radio is radio:
+                        self._radio = None
                 if device is not None:
                     try:
                         device.close()
+                    except Exception:
+                        pass
+                if radio is not None:
+                    try:
+                        radio.close()
                     except Exception:
                         pass
         if self._audio_stop.is_set():
@@ -112,15 +133,20 @@ class RadioPlayerPlugin(BasePlugin):
         self._audio_stop.clear()
         self._audio_thread = threading.Thread(target=self._audio_worker, name="ledmatrix-radio-audio", daemon=True)
         self._audio_thread.start()
-        self._ensure_metadata_thread()
 
     def _stop_player(self):
         self._audio_stop.set()
         with self._lock:
             device = self._device
+            radio = self._radio
         if device is not None:
             try:
                 device.close()
+            except Exception:
+                pass
+        if radio is not None:
+            try:
+                radio.close()
             except Exception:
                 pass
         thread = self._audio_thread
@@ -128,45 +154,6 @@ class RadioPlayerPlugin(BasePlugin):
             thread.join(timeout=2)
         self._audio_thread = None
         self.status = "Stopped"
-
-    def _ensure_metadata_thread(self):
-        if not self.metadata_enabled or not self.stream_url:
-            return
-        if self._metadata_thread and self._metadata_thread.is_alive():
-            return
-        self._metadata_stop.clear()
-        self._metadata_thread = threading.Thread(target=self._metadata_worker, name="ledmatrix-radio-metadata", daemon=True)
-        self._metadata_thread.start()
-
-    def _metadata_worker(self):
-        """Read standard ICY StreamTitle without blocking the display thread."""
-        while not self._metadata_stop.is_set():
-            try:
-                request = urllib.request.Request(self.stream_url, headers={"Icy-MetaData": "1", "User-Agent": "LEDMatrix-Radio/0.3"})
-                with urllib.request.urlopen(request, timeout=15) as response:
-                    metaint = response.headers.get("icy-metaint")
-                    if not metaint:
-                        self.logger.info("Stream does not advertise ICY metadata")
-                        return
-                    interval = int(metaint)
-                    while not self._metadata_stop.is_set():
-                        audio = response.read(interval)
-                        if len(audio) < interval:
-                            break
-                        length_byte = response.read(1)
-                        if not length_byte:
-                            break
-                        raw = response.read(length_byte[0] * 16)
-                        metadata = raw.rstrip(b"\0").decode("utf-8", "replace")
-                        marker = "StreamTitle='"
-                        if marker in metadata:
-                            title = metadata.split(marker, 1)[1].split("';", 1)[0].strip()
-                            if title and title != self.now_playing:
-                                self.now_playing = title
-                                self.logger.info("Now playing: %s", title)
-            except Exception as exc:
-                self.logger.debug("ICY metadata unavailable: %s", exc)
-            self._metadata_stop.wait(15)
 
     def update(self):
         if self.autoplay:
@@ -196,16 +183,13 @@ class RadioPlayerPlugin(BasePlugin):
 
     def on_config_change(self, new_config):
         old_stream = self.stream_url
-        old_device = self.audio_device
         old_volume = self.volume
         super().on_config_change(new_config)
         self._load_config(self.config)
         self._register_fonts()
-        if (old_stream, old_device, old_volume) != (self.stream_url, self.audio_device, self.volume):
-            self._metadata_stop.set()
+        if (old_stream, old_volume) != (self.stream_url, self.volume):
             self._stop_player()
             self.now_playing = ""
-            self._metadata_thread = None
         if self.autoplay:
             self._start_player()
 
@@ -226,9 +210,5 @@ class RadioPlayerPlugin(BasePlugin):
         return info
 
     def cleanup(self):
-        self._metadata_stop.set()
         self._stop_player()
-        thread = self._metadata_thread
-        if thread and thread.is_alive():
-            thread.join(timeout=1)
         super().cleanup()
