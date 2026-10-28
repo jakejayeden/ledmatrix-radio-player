@@ -1,0 +1,25 @@
+{
+  "id": "ledmatrix-radio-player",
+  "name": "Radio Player",
+  "version": "0.1.0",
+  "author": "jakejayeden",
+  "description": "Internet radio playback with station and ICY now-playing metadata for LEDMatrix.",
+  "entry_point": "manager.py",
+  "class_name": "RadioPlayerPlugin",
+  "category": "entertainment",
+  "tags": ["radio", "audio", "music", "streaming"],
+  "display_modes": ["radio"],
+  "config_schema": "config_schema.json",
+  "compatible_versions": [">=3.8.0"],
+  "min_ledmatrix_version": "3.8.0",
+  "license": "GPL-3.0",
+  "versions": [
+    {
+      "version": "0.1.0",
+      "released": "2026-10-28",
+      "ledmatrix_min_version": "3.8.0",
+      "notes": "Initial release: mpv audio playback, ALSA device selection, ICY metadata, reconnect handling, and compact 128x32 display."
+    }
+  ],
+  "last_updated": "2026-10-28"
+}
