@@ -9,11 +9,17 @@ from PIL import Image, ImageDraw, ImageFont
 from src.plugin_system.base_plugin import BasePlugin
 
 
-HEART_80S_STREAM = "https://media-ssl.musicradio.com/Heart80sMP3"
+STATIONS = {
+    "heart_80s": {
+        "name": "Heart 80s",
+        "url": "https://media-ssl.musicradio.com/Heart80sMP3",
+    },
+}
+DEFAULT_STATION = "heart_80s"
 
 
 class RadioPlayerPlugin(BasePlugin):
-    """Play an internet-radio stream and display ICY metadata."""
+    """Play an internet-radio station preset and display ICY metadata."""
 
     def __init__(self, plugin_id, config, display_manager, cache_manager, plugin_manager):
         super().__init__(plugin_id, config, display_manager, cache_manager, plugin_manager)
@@ -27,15 +33,17 @@ class RadioPlayerPlugin(BasePlugin):
         self.last_error = ""
         self._scroll_started = time.monotonic()
         self.enable_scrolling = True
-        # Match the Apple Calendar plugin: Pillow's built-in default font,
-        # rendered directly onto an RGB image rather than LEDMatrix TTF/BDF fonts.
         self.font = ImageFont.load_default()
         self._load_config(config)
 
     def _load_config(self, config):
-        self.station_name = str(config.get("station_name", "Heart 80s"))
-        configured_url = str(config.get("stream_url", "")).strip()
-        self.stream_url = configured_url or HEART_80S_STREAM
+        requested_station = str(config.get("station", DEFAULT_STATION)).strip()
+        self.station = requested_station if requested_station in STATIONS else DEFAULT_STATION
+        preset = STATIONS[self.station]
+        # Station name and URL are intentionally derived from the preset so a
+        # single dropdown selection always switches both together.
+        self.station_name = preset["name"]
+        self.stream_url = preset["url"]
         self.autoplay = bool(config.get("autoplay", True))
         self.volume = max(0, min(100, int(config.get("volume", 70))))
         self.metadata_enabled = bool(config.get("metadata_enabled", True))
@@ -53,7 +61,6 @@ class RadioPlayerPlugin(BasePlugin):
             self.logger.info("Now playing: %s", title)
 
     def _audio_worker(self):
-        """Decode and play the station using the pip-installed miniaudio library."""
         while not self._audio_stop.is_set():
             radio = None
             device = None
@@ -85,11 +92,7 @@ class RadioPlayerPlugin(BasePlugin):
                     self._radio = radio
                     self._device = device
                 self.status = "Playing"
-                self.logger.info(
-                    "Radio playback started (miniaudio %s, backend=%s)",
-                    getattr(miniaudio, "__version__", "unknown"),
-                    getattr(device, "backend", "unknown"),
-                )
+                self.logger.info("Radio playback started: %s", self.station_name)
                 while not self._audio_stop.wait(0.5):
                     pass
                 break
@@ -162,12 +165,10 @@ class RadioPlayerPlugin(BasePlugin):
         draw.text(((width - text_width) // 2, y), text, font=self.font, fill=fill)
 
     def _draw_metadata(self, draw, text, width, y):
-        """Draw short metadata centered; smoothly marquee long metadata."""
         text_width = self._text_width(draw, text)
         if text_width <= width - 4:
             self._draw_centered(draw, text, y, width, self.metadata_color)
             return
-
         gap = 24
         travel = width + text_width + gap
         elapsed = max(0.0, time.monotonic() - self._scroll_started)
@@ -175,31 +176,26 @@ class RadioPlayerPlugin(BasePlugin):
         draw.text((x, y), text, font=self.font, fill=self.metadata_color)
 
     def display(self, force_clear=False):
-        # Render the complete 128x32-style frame in Pillow, matching Apple Calendar.
         width, height = self.display_manager.width, self.display_manager.height
         image = Image.new("RGB", (width, height), (0, 0, 0))
         draw = ImageDraw.Draw(image)
         detail = self.now_playing or self.status
-
         set_scrolling = getattr(self.display_manager, "set_scrolling_state", None)
         if callable(set_scrolling):
             set_scrolling(True)
-
-        # Two compact rows for a 32px-high panel. Pillow's default font keeps
-        # the typography identical to the Apple Calendar rendering path.
         self._draw_centered(draw, self.station_name, 5, width, self.station_color)
         self._draw_metadata(draw, detail, width, 18)
-
         self.display_manager.image = image
         self.display_manager.update_display()
 
     def on_config_change(self, new_config):
+        old_station = self.station
         old_stream = self.stream_url
         old_volume = self.volume
         super().on_config_change(new_config)
         self._load_config(self.config)
         self._scroll_started = time.monotonic()
-        if (old_stream, old_volume) != (self.stream_url, self.volume):
+        if (old_station, old_stream, old_volume) != (self.station, self.stream_url, self.volume):
             self._stop_player()
             self.now_playing = ""
         if self.autoplay:
@@ -208,17 +204,17 @@ class RadioPlayerPlugin(BasePlugin):
     def validate_config(self):
         if not super().validate_config():
             return False
+        if self.station not in STATIONS:
+            self.logger.error("Unknown station preset: %s", self.station)
+            return False
         if not 0 <= self.volume <= 100:
             self.logger.error("volume must be between 0 and 100")
-            return False
-        if self.stream_url and not self.stream_url.startswith(("http://", "https://")):
-            self.logger.error("stream_url must be an HTTP(S) URL")
             return False
         return True
 
     def get_info(self):
         info = super().get_info()
-        info.update({"station": self.station_name, "stream_url": self.stream_url, "now_playing": self.now_playing, "playback_status": self.status, "last_error": self.last_error, "audio_backend": "miniaudio"})
+        info.update({"station": self.station, "station_name": self.station_name, "stream_url": self.stream_url, "now_playing": self.now_playing, "playback_status": self.status, "last_error": self.last_error, "audio_backend": "miniaudio"})
         return info
 
     def cleanup(self):
